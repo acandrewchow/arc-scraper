@@ -22,64 +22,8 @@ from scraper import check_stock_status
 
 load_dotenv()
 
-# Use absolute path for subscriptions and state files
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-SUBSCRIPTIONS_FILE = os.path.join(APP_DIR, "subscriptions.json")
-STATE_DIR = os.path.join(APP_DIR, "state")
-
-
-def get_state_file_path(product_url: str) -> str:
-    """Generate a state file path based on the product URL."""
-    url_hash = hashlib.md5(product_url.encode()).hexdigest()[:8]
-    os.makedirs(STATE_DIR, exist_ok=True)
-    return os.path.join(STATE_DIR, f"state_{url_hash}.json")
-
-
-def load_subscriptions() -> Dict:
-    """Load subscriptions from JSON file."""
-    if os.path.exists(SUBSCRIPTIONS_FILE):
-        with open(SUBSCRIPTIONS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-
-def save_subscriptions(subscriptions: Dict):
-    """Save subscriptions to JSON file."""
-    with open(SUBSCRIPTIONS_FILE, 'w') as f:
-        json.dump(subscriptions, f, indent=2)
-
-
-def load_state(state_file: str) -> Dict:
-    """Load the last known state for a product."""
-    if os.path.exists(state_file):
-        with open(state_file, 'r') as f:
-            return json.load(f)
-    return {'color_stock': {}, 'color_size_stock': {}, 'last_checked': None, 'has_sizes': None}
-
-
-def save_state(state_file: str, color_stock: Optional[Dict[str, bool]] = None,
-               color_size_stock: Optional[Dict[str, Dict[str, bool]]] = None,
-               has_sizes: Optional[bool] = None,
-               product_name: Optional[str] = None):
-    """Save the current state."""
-    state = {
-        'last_checked': datetime.now().isoformat()
-    }
-    
-    if product_name is not None:
-        state['product_name'] = product_name
-    
-    if has_sizes is not None:
-        state['has_sizes'] = has_sizes
-    
-    if color_stock is not None:
-        state['color_stock'] = color_stock
-    
-    if color_size_stock is not None:
-        state['color_size_stock'] = color_size_stock
-    
-    with open(state_file, 'w') as f:
-        json.dump(state, f, indent=2)
+# Import database functions (uses Supabase)
+from db import load_subscriptions, save_subscriptions, load_state, save_state
 
 
 def send_stock_notification(email: str, product_name: str, product_url: str,
@@ -182,8 +126,7 @@ def check_all_subscriptions():
                 continue
             
             product_name = product_name or subs[0].get('product_name', 'Product')
-            state_file = get_state_file_path(product_url)
-            previous_state = load_state(state_file)
+            previous_state = load_state(product_url)
             
             # Determine stock changes
             back_in_stock = []
@@ -202,7 +145,7 @@ def check_all_subscriptions():
                                 out_of_stock.append((color, size))
                 
                 # Save new state
-                save_state(state_file, color_size_stock=stock_data, 
+                save_state(product_url, color_size_stock=stock_data, 
                           has_sizes=True, product_name=product_name)
             else:
                 previous = previous_state.get('color_stock', {})
@@ -215,7 +158,7 @@ def check_all_subscriptions():
                             out_of_stock.append((color, None))
                 
                 # Save new state
-                save_state(state_file, color_stock=stock_data, 
+                save_state(product_url, color_stock=stock_data, 
                           has_sizes=False, product_name=product_name)
             
             # Send notifications if there are changes

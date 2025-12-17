@@ -40,22 +40,8 @@ st.set_page_config(
     layout="wide"
 )
 
-# Use absolute path for subscriptions file
-SUBSCRIPTIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "subscriptions.json")
-
-
-def load_subscriptions() -> Dict:
-    """Load subscriptions from JSON file."""
-    if os.path.exists(SUBSCRIPTIONS_FILE):
-        with open(SUBSCRIPTIONS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
-
-
-def save_subscriptions(subscriptions: Dict):
-    """Save subscriptions to JSON file."""
-    with open(SUBSCRIPTIONS_FILE, 'w') as f:
-        json.dump(subscriptions, f, indent=2)
+# Import database functions (uses Supabase or falls back to JSON)
+from db import load_subscriptions, save_subscriptions
 
 
 def get_subscription_key(email: str, product_url: str) -> str:
