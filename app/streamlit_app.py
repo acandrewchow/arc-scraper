@@ -18,7 +18,6 @@ from email.mime.text import MIMEText
 
 # Add app directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from scraper import check_stock_status
 
 load_dotenv()
 
@@ -193,50 +192,15 @@ def main():
         st.error(f"Error processing verification: {str(e)}")
     
     st.title("🏔️ Arc'teryx Stock Monitor")
-    st.markdown("Check stock status and get notified when products come back in stock!")
+    st.markdown("Get notified when Arc'teryx products come back in stock!")
+    
+    # Info banner
+    st.info("📧 **How it works:** Subscribe with your email below. We'll automatically check stock every 15 minutes and email you when items come back in stock!")
     
     # Sidebar for navigation
-    page = st.sidebar.selectbox("Navigation", ["Check Stock", "Subscribe", "My Subscriptions"])
+    page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions"])
     
-    if page == "Check Stock":
-        st.header("Check Product Stock")
-        
-        product_url = st.text_input(
-            "Product URL",
-            placeholder="https://arcteryx.com/ca/en/shop/...",
-            help="Enter the full URL of the Arc'teryx product page"
-        )
-        
-        if st.button("Check Stock", type="primary"):
-            if not product_url or 'arcteryx.com' not in product_url:
-                st.error("Please enter a valid Arc'teryx product URL")
-            else:
-                with st.spinner("Checking stock status... This may take a minute."):
-                    stock_data, has_sizes, product_name = check_stock_status(product_url, headless=True)
-                
-                if stock_data is None:
-                    st.error("Could not check stock status. Please verify the URL is correct.")
-                else:
-                    st.success(f"Stock check complete for: {product_name or 'Product'}")
-                    
-                    if has_sizes:
-                        st.subheader("Stock Status by Color and Size")
-                        for color, sizes_stock in stock_data.items():
-                            with st.expander(f"**{color}**"):
-                                cols = st.columns(3)
-                                for idx, (size, in_stock) in enumerate(sizes_stock.items()):
-                                    col = cols[idx % 3]
-                                    status = "✅ IN STOCK" if in_stock else "❌ OUT OF STOCK"
-                                    col.metric(size, status)
-                    else:
-                        st.subheader("Stock Status by Color")
-                        cols = st.columns(3)
-                        for idx, (color, in_stock) in enumerate(stock_data.items()):
-                            col = cols[idx % 3]
-                            status = "✅ IN STOCK" if in_stock else "❌ OUT OF STOCK"
-                            col.metric(color, status)
-    
-    elif page == "Subscribe":
+    if page == "Subscribe":
         st.header("Subscribe for Stock Alerts")
         
         email = st.text_input("Your Email", placeholder="your.email@example.com")
