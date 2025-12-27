@@ -11,7 +11,7 @@ import sys
 import time
 import hashlib
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Set, Tuple, Optional, Iterable
 from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
@@ -23,7 +23,7 @@ from scraper import check_stock_status
 load_dotenv()
 
 # Import database functions (uses Supabase)
-from db import load_subscriptions, save_subscriptions, load_state, save_state
+from db import load_subscriptions, save_subscriptions, load_state, save_state, save_stock_history
 
 
 def send_stock_notification(email: str, product_name: str, product_url: str,
@@ -141,6 +141,11 @@ def check_all_subscriptions():
                         if was_in_stock is not None:
                             if not was_in_stock and is_in_stock:
                                 back_in_stock.append((color, size))
+                                # Record in stock history
+                                try:
+                                    save_stock_history(product_url, product_name, color, size)
+                                except Exception as e:
+                                    print(f"   ⚠️  Error saving stock history: {e}", file=sys.stderr)
                             elif was_in_stock and not is_in_stock:
                                 out_of_stock.append((color, size))
                 
@@ -154,6 +159,11 @@ def check_all_subscriptions():
                     if was_in_stock is not None:
                         if not was_in_stock and is_in_stock:
                             back_in_stock.append((color, None))
+                            # Record in stock history
+                            try:
+                                save_stock_history(product_url, product_name, color, None)
+                            except Exception as e:
+                                print(f"   ⚠️  Error saving stock history: {e}", file=sys.stderr)
                         elif was_in_stock and not is_in_stock:
                             out_of_stock.append((color, None))
                 

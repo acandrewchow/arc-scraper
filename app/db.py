@@ -3,7 +3,8 @@ Database utilities using Supabase
 Requires Supabase to be configured
 """
 import os
-from typing import Dict
+from typing import Dict, List, Optional
+from datetime import datetime
 
 # Import Supabase
 try:
@@ -103,8 +104,6 @@ def save_state(product_url: str, color_stock: Dict = None, color_size_stock: Dic
     """Save the current stock state to Supabase."""
     supabase = get_supabase_client()
     
-    from datetime import datetime
-    
     state_data = {
         'product_url': product_url,
         'last_checked': datetime.now().isoformat()
@@ -126,4 +125,100 @@ def save_state(product_url: str, color_stock: Dict = None, color_size_stock: Dic
         supabase.table('stock_state').upsert(state_data).execute()
     except Exception as e:
         raise Exception(f"Error saving state to Supabase: {e}")
+
+
+def save_stock_history(product_url: str, product_name: str, color: str, size: Optional[str] = None):
+    """Record when an item comes back in stock."""
+    supabase = get_supabase_client()
+    
+    try:
+        history_data = {
+            'product_url': product_url,
+            'product_name': product_name,
+            'color': color,
+            'size': size,
+            'came_back_in_stock_at': datetime.now().isoformat()
+        }
+        supabase.table('stock_history').insert(history_data).execute()
+    except Exception as e:
+        raise Exception(f"Error saving stock history to Supabase: {e}")
+
+
+def get_popular_items(limit: int = 20) -> List[Dict]:
+    """
+    Get popular items based on number of subscriptions.
+    Returns list of products with subscription counts.
+    """
+    supabase = get_supabase_client()
+    
+    try:
+        # Get subscription counts per product
+        subscriptions = load_subscriptions()
+        product_counts = {}
+        for sub in subscriptions.values():
+            if sub.get('verified', False):
+                product_url = sub['product_url']
+                product_counts[product_url] = product_counts.get(product_url, 0) + 1
+        
+        # Get product details from stock_state
+        popular_items = []
+        for product_url, sub_count in sorted(product_counts.items(), key=lambda x: x[1], reverse=True)[:limit]:
+            response = supabase.table('stock_state').select('*').eq('product_url', product_url).execute()
+            if response.data and len(response.data) > 0:
+                row = response.data[0]
+                popular_items.append({
+                    'product_url': product_url,
+                    'product_name': row.get('product_name', 'Unknown Product'),
+                    'subscription_count': sub_count,
+                    'has_sizes': row.get('has_sizes', False),
+                    'last_checked': row.get('last_checked')
+                })
+        
+        return popular_items
+    except Exception as e:
+        raise Exception(f"Error getting popular items from Supabase: {e}")
+
+
+def get_last_in_stock_times(product_url: str) -> Dict:
+    """
+    Get the last time each color/size combination came back in stock.
+    Returns a dict with structure:
+    {
+        'color_name': {
+            'size_name': 'timestamp',
+            None: 'timestamp'  # for products without sizes
+        }
+    }
+    """
+    supabase = get_supabase_client()
+    
+    try:
+        response = supabase.table('stock_history')\
+            .select('color, size, came_back_in_stock_at')\
+            .eq('product_url', product_url)\
+            .order('came_back_in_stock_at', desc=True)\
+            .execute()
+        
+        last_times = {}
+        seen_combinations = set()
+        for row in response.data:
+            color = row['color']
+            size = row.get('size')
+            timestamp = row['came_back_in_stock_at']
+            
+            # Create a unique key for this color/size combination
+            combination_key = (color, size)
+            
+            # Since results are ordered by timestamp DESC, first occurrence is most recent
+            if combination_key not in seen_combinations:
+                seen_combinations.add(combination_key)
+                
+                if color not in last_times:
+                    last_times[color] = {}
+                
+                last_times[color][size] = timestamp
+        
+        return last_times
+    except Exception as e:
+        raise Exception(f"Error getting last in-stock times from Supabase: {e}")
 

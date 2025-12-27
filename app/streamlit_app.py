@@ -40,7 +40,7 @@ st.set_page_config(
 )
 
 # Import database functions (uses Supabase or falls back to JSON)
-from db import load_subscriptions, save_subscriptions
+from db import load_subscriptions, save_subscriptions, get_popular_items, get_last_in_stock_times
 
 
 def get_subscription_key(email: str, product_url: str) -> str:
@@ -198,7 +198,7 @@ def main():
     st.info("📧 **How it works:** Subscribe with your email below. We'll automatically check stock every 15 minutes and email you when items come back in stock!")
     
     # Sidebar for navigation
-    page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions"])
+    page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions", "Popular Items"])
     
     if page == "Subscribe":
         st.header("Subscribe for Stock Alerts")
@@ -271,6 +271,104 @@ def main():
                                 st.success("Unsubscribed successfully!")
                                 st.rerun()
                         st.divider()
+    
+    elif page == "Popular Items":
+        st.header("🔥 Popular Items")
+        st.markdown("See the most subscribed products and when each size/color last came back in stock.")
+        
+        try:
+            popular_items = get_popular_items(limit=50)
+            
+            if not popular_items:
+                st.info("No popular items yet. Subscribe to products to see them here!")
+            else:
+                st.metric("Total Popular Products", len(popular_items))
+                
+                for item in popular_items:
+                    with st.expander(f"🏔️ {item['product_name']} ({item['subscription_count']} subscribers)", expanded=False):
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.write(f"**Product URL:** {item['product_url']}")
+                            if item.get('last_checked'):
+                                try:
+                                    last_checked_str = item['last_checked']
+                                    # Handle different timestamp formats
+                                    if last_checked_str.endswith('Z'):
+                                        last_checked_str = last_checked_str.replace('Z', '+00:00')
+                                    last_checked = datetime.fromisoformat(last_checked_str)
+                                    st.caption(f"Last checked: {last_checked.strftime('%Y-%m-%d %H:%M:%S')}")
+                                except Exception:
+                                    st.caption(f"Last checked: {item['last_checked']}")
+                        
+                        with col2:
+                            st.metric("Subscribers", item['subscription_count'])
+                        
+                        # Get last in-stock times
+                        try:
+                            last_times = get_last_in_stock_times(item['product_url'])
+                            
+                            if last_times:
+                                st.subheader("Last In-Stock Times")
+                                
+                                if item.get('has_sizes'):
+                                    # Display as table with sizes
+                                    for color, size_times in last_times.items():
+                                        st.write(f"**{color}**")
+                                        if size_times:
+                                            # Create a table for this color
+                                            table_data = []
+                                            for size, timestamp in sorted(size_times.items(), key=lambda x: x[1] if x[1] else '', reverse=True):
+                                                if timestamp:
+                                                    try:
+                                                        timestamp_str = timestamp.replace('Z', '+00:00') if timestamp.endswith('Z') else timestamp
+                                                        dt = datetime.fromisoformat(timestamp_str)
+                                                        time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                                                    except Exception:
+                                                        time_str = str(timestamp)
+                                                    table_data.append({
+                                                        'Size': size if size else 'N/A',
+                                                        'Last In Stock': time_str
+                                                    })
+                                            
+                                            if table_data:
+                                                st.table(table_data)
+                                            else:
+                                                st.caption("No stock history available")
+                                        st.divider()
+                                else:
+                                    # Display without sizes
+                                    table_data = []
+                                    for color, size_times in last_times.items():
+                                        if size_times:
+                                            # Get the most recent time for this color
+                                            timestamps = [ts for ts in size_times.values() if ts]
+                                            if timestamps:
+                                                latest = max(timestamps)
+                                                try:
+                                                    latest_str = latest.replace('Z', '+00:00') if latest.endswith('Z') else latest
+                                                    dt = datetime.fromisoformat(latest_str)
+                                                    time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                                                except Exception:
+                                                    time_str = str(latest)
+                                                table_data.append({
+                                                    'Color': color,
+                                                    'Last In Stock': time_str
+                                                })
+                                    
+                                    if table_data:
+                                        st.table(table_data)
+                                    else:
+                                        st.caption("No stock history available")
+                            else:
+                                st.info("No stock history available for this product yet.")
+                        except Exception as e:
+                            st.error(f"Error loading stock history: {e}")
+                        
+                        st.divider()
+        
+        except Exception as e:
+            st.error(f"Error loading popular items: {e}")
+            st.info("Make sure the stock_history table has been created in your Supabase database.")
 
 
 if __name__ == "__main__":
