@@ -40,7 +40,7 @@ st.set_page_config(
 )
 
 # Import database functions (uses Supabase or falls back to JSON)
-from db import load_subscriptions, save_subscriptions, get_popular_items, get_last_in_stock_times
+from db import load_subscriptions, save_subscriptions, delete_subscription, get_popular_items, get_last_in_stock_times
 
 
 def get_subscription_key(email: str, product_url: str) -> str:
@@ -253,12 +253,13 @@ def main():
         
         if email and '@' in email:
             subscriptions = load_subscriptions()
-            user_subs = [sub for sub in subscriptions.values() if sub['email'] == email]
+            # Include the subscription ID (key) with each subscription
+            user_subs = [(sub_id, sub) for sub_id, sub in subscriptions.items() if sub['email'] == email]
             
             if not user_subs:
                 st.info("No subscriptions found for this email.")
             else:
-                for sub in user_subs:
+                for sub_id, sub in user_subs:
                     with st.container():
                         col1, col2, col3 = st.columns([3, 1, 1])
                         col1.write(f"**Product:** {sub['product_url']}")
@@ -266,10 +267,12 @@ def main():
                         if sub.get('verified'):
                             unsubscribe_token = sub['token']
                             if col3.button("Unsubscribe", key=f"unsub_{sub['token']}"):
-                                subscriptions.pop(get_subscription_key(sub['email'], sub['product_url']), None)
-                                save_subscriptions(subscriptions)
-                                st.success("Unsubscribed successfully!")
-                                st.rerun()
+                                try:
+                                    delete_subscription(sub_id)
+                                    st.success("Unsubscribed successfully!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error unsubscribing: {e}")
                         st.divider()
     
     elif page == "Popular Items":

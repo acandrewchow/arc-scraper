@@ -77,6 +77,16 @@ def save_subscriptions(subscriptions: Dict):
         raise Exception(f"Error saving subscriptions to Supabase: {e}")
 
 
+def delete_subscription(subscription_id: str):
+    """Delete a subscription from Supabase by ID."""
+    supabase = get_supabase_client()
+    
+    try:
+        supabase.table('subscriptions').delete().eq('id', subscription_id).execute()
+    except Exception as e:
+        raise Exception(f"Error deleting subscription from Supabase: {e}")
+
+
 def load_state(product_url: str) -> Dict:
     """Load the last known stock state for a product from Supabase."""
     supabase = get_supabase_client()
