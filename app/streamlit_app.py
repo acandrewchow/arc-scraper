@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from urllib.parse import unquote
 from dotenv import load_dotenv
 import smtplib
+from rate_limiter import MAX_SUBSCRIPTIONS_PER_EMAIL, MAX_ATTEMPTS_PER_EMAIL_PER_HOUR
 from email.mime.text import MIMEText
 
 # Add app directory to path for imports
@@ -41,6 +42,9 @@ st.set_page_config(
 
 # Import database functions (uses Supabase or falls back to JSON)
 from db import load_subscriptions, save_subscriptions, delete_subscription, get_popular_items, get_last_in_stock_times
+
+# Import rate limiting
+from rate_limiter import check_rate_limit, record_rate_limit_attempt, get_session_id, cleanup_old_attempts
 
 
 def get_subscription_key(email: str, product_url: str) -> str:
@@ -203,6 +207,9 @@ def main():
     if page == "Subscribe":
         st.header("Subscribe for Stock Alerts")
         
+        # Display rate limit info
+        # st.caption(f"📊 Rate limits: Max {MAX_SUBSCRIPTIONS_PER_EMAIL} subscriptions per email, {MAX_ATTEMPTS_PER_EMAIL_PER_HOUR} attempts per hour")
+        
         email = st.text_input("Your Email", placeholder="your.email@example.com")
         product_url = st.text_input(
             "Product URL",
@@ -216,35 +223,55 @@ def main():
             elif not product_url or 'arcteryx.com' not in product_url:
                 st.error("Please enter a valid Arc'teryx product URL")
             else:
-                subscriptions = load_subscriptions()
-                sub_key = get_subscription_key(email, product_url)
+                # Clean up old rate limit attempts periodically (10% chance to avoid overhead)
+                import random
+                if random.random() < 0.1:
+                    try:
+                        cleanup_old_attempts()
+                    except:
+                        pass
                 
-                if sub_key in subscriptions:
-                    sub = subscriptions[sub_key]
-                    if sub.get('verified'):
-                        st.warning("You are already subscribed to this product!")
+                # Check rate limits before proceeding
+                session_id = get_session_id()
+                allowed, error_msg = check_rate_limit(email, session_id)
+                
+                if not allowed:
+                    # Record failed attempt due to rate limiting
+                    record_rate_limit_attempt(email, session_id, success=False)
+                    st.error(f"⚠️ {error_msg}")
+                    st.info("💡 This helps prevent abuse and ensures fair access for all users.")
+                else:
+                    subscriptions = load_subscriptions()
+                    sub_key = get_subscription_key(email, product_url)
+                    
+                    if sub_key in subscriptions:
+                        sub = subscriptions[sub_key]
+                        if sub.get('verified'):
+                            st.warning("You are already subscribed to this product!")
+                        else:
+                            # Resend verification
+                            record_rate_limit_attempt(email, session_id, success=True)
+                            if send_verification_email(email, sub['token'], product_url):
+                                st.info("Verification email resent! Please check your inbox.")
+                            else:
+                                st.error("Failed to send verification email. Please check your email configuration.")
                     else:
-                        # Resend verification
-                        if send_verification_email(email, sub['token'], product_url):
-                            st.info("Verification email resent! Please check your inbox.")
+                        # Create new subscription
+                        record_rate_limit_attempt(email, session_id, success=True)
+                        token = secrets.token_urlsafe(32)
+                        subscriptions[sub_key] = {
+                            'email': email,
+                            'product_url': product_url,
+                            'token': token,
+                            'verified': False,
+                            'created_at': datetime.now().isoformat()
+                        }
+                        save_subscriptions(subscriptions)
+                        
+                        if send_verification_email(email, token, product_url):
+                            st.success("Subscription created! Please check your email to verify your subscription.")
                         else:
                             st.error("Failed to send verification email. Please check your email configuration.")
-                else:
-                    # Create new subscription
-                    token = secrets.token_urlsafe(32)
-                    subscriptions[sub_key] = {
-                        'email': email,
-                        'product_url': product_url,
-                        'token': token,
-                        'verified': False,
-                        'created_at': datetime.now().isoformat()
-                    }
-                    save_subscriptions(subscriptions)
-                    
-                    if send_verification_email(email, token, product_url):
-                        st.success("Subscription created! Please check your email to verify your subscription.")
-                    else:
-                        st.error("Failed to send verification email. Please check your email configuration.")
     
     elif page == "My Subscriptions":
         st.header("My Subscriptions")
