@@ -276,7 +276,9 @@ def main():
         with st.container():
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                image_path = "images/verify.png"
+                # Use __file__ to get the script's directory, then build path relative to it
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                image_path = os.path.join(script_dir, "images", "verify.png")
                 
                 try:
                     st.image(image_path, caption="Verification Email Preview")
