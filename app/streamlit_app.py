@@ -202,9 +202,101 @@ def main():
     st.info("📧 **How it works:** Subscribe with your email below. We'll automatically check stock every 15 minutes and email you when items come back in stock!")
     
     # Sidebar for navigation
-    page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions", "Popular Items"])
+    page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions", "Popular Items", "Tutorial"])
     
-    if page == "Subscribe":
+    if page == "Tutorial":
+        st.header("📚 How to Subscribe - Step by Step Tutorial")
+        st.markdown("Learn how to subscribe to Arc'teryx stock alerts in just a few simple steps!")
+        
+        st.divider()
+        
+        # Step 1: Enter Email
+        st.subheader("Step 1: Enter Your Email Address")
+        st.markdown("Start by entering your email address where you'd like to receive stock notifications.")
+        
+        with st.container():
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                tutorial_email = st.text_input(
+                    "Your Email",
+                    value="your.email@example.com",
+                    key="tutorial_email",
+                    disabled=True
+                )
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.success("✅ Email entered")
+        
+        st.info("💡 **Tip:** Use an email address you check regularly so you don't miss stock alerts!")
+        
+        st.divider()
+        
+        # Step 2: Enter Product URL
+        st.subheader("Step 2: Enter Product URL")
+        st.markdown("Copy and paste the full URL of the Arc'teryx product page you want to monitor.")
+        
+        with st.container():
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                tutorial_url = st.text_input(
+                    "Product URL (Example)",
+                    value="https://arcteryx.com/ca/en/shop/bird-head-toque",
+                    key="tutorial_url",
+                    disabled=True
+                )
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.success("✅ URL entered")
+        
+        st.info("💡 **Tip:** Make sure you're on the product page (not the category page) and copy the full URL from your browser's address bar.")
+        
+        st.divider()
+        
+        # Step 3: Click Subscribe Button
+        st.subheader("Step 3: Click the Subscribe Button")
+        st.markdown("Once you've entered both your email and product URL, click the Subscribe button.")
+        
+        with st.container():
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("Subscribe", type="primary", key="tutorial_subscribe", disabled=True):
+                    pass
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.success("✅ Subscription request sent!")
+        
+        st.info("💡 **What happens:** The system will check if you're already subscribed and verify your email address.")
+        
+        st.divider()
+        
+        # Step 4: Check Your Email
+        st.subheader("Step 4: Check Your Email for Verification")
+        st.markdown("After clicking Subscribe, you'll receive a verification email. Here's what it looks like:")
+        
+        # Email preview using image
+        with st.container():
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                image_path = "images/verify.png"
+                
+                try:
+                    st.image(image_path, caption="Verification Email Preview")
+                except Exception as e:
+                    st.warning(f"⚠️ Could not load verification email image: {e}")
+                    st.info("💡 The verification email will contain a link to verify your subscription.")
+        
+        st.divider()
+        
+        # Step 5: Click Verification Link
+        st.subheader("Step 5: Click the Verification Link")
+        st.markdown("Click the verification link in your email (shown above) to activate your subscription.")
+        
+        
+        st.info("💡 **Tip:** The verification link expires after some time. If it doesn't work, you can request a new verification email.")
+        
+        st.divider()
+    
+    
+    elif page == "Subscribe":
         st.header("Subscribe for Stock Alerts")
         
         # Display rate limit info
