@@ -2,8 +2,8 @@ name: Stock Check Scheduler
 
 on:
   # Temporarily disabled cron schedule
-  # schedule:
-  #   - cron: '7,22,37,52 * * * *'
+  schedule:
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch: # Allow manual triggering
 
 jobs:
