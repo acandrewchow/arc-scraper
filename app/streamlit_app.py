@@ -1,498 +1,159 @@
 """
 Arc'teryx Stock Monitor - Streamlit Web App
-Allows users to check stock and subscribe for notifications
+DEPRECATED: This app has moved to https://arc-scraper-v2.vercel.app/
 """
 
 import streamlit as st
-import json
-import os
-import sys
-import hashlib
-import secrets
-from datetime import datetime
-from typing import Dict, List, Optional
-from urllib.parse import unquote
-from dotenv import load_dotenv
-import smtplib
-from rate_limiter import MAX_SUBSCRIPTIONS_PER_EMAIL, MAX_ATTEMPTS_PER_EMAIL_PER_HOUR
-from email.mime.text import MIMEText
-
-# Add app directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-load_dotenv()
-
-def get_env_var(key: str, default: Optional[str] = None) -> Optional[str]:
-    """Get environment variable from Streamlit secrets or os.getenv."""
-    try:
-        if hasattr(st, 'secrets') and key in st.secrets:
-            return st.secrets[key]
-    except Exception:
-        pass
-    
-    # Fallback to environment variables (for local .env file)
-    return os.getenv(key, default)
 
 # Page config
 st.set_page_config(
-    page_title="Arc'teryx Stock Monitor",
+    page_title="Arc'teryx Stock Monitor - Moved",
     page_icon="🏔️",
     layout="wide"
 )
 
-# Import database functions (uses Supabase or falls back to JSON)
-from db import load_subscriptions, save_subscriptions, delete_subscription, get_popular_items, get_last_in_stock_times
-
-# Import rate limiting
-from rate_limiter import check_rate_limit, record_rate_limit_attempt, get_session_id, cleanup_old_attempts
-
-
-def get_subscription_key(email: str, product_url: str) -> str:
-    """Generate a unique key for a subscription."""
-    return hashlib.md5(f"{email}:{product_url}".encode()).hexdigest()
-
-
-def send_verification_email(email: str, token: str, product_url: str):
-    """Send verification email to user."""
-    try:
-        sender = get_env_var('SENDER_EMAIL')
-        password = get_env_var('SENDER_PASSWORD')
-        smtp_server = get_env_var('SMTP_SERVER', 'smtp.gmail.com')
-        smtp_port = int(get_env_var('SMTP_PORT', '587'))
-        
-        if not all([sender, password]):
-            return False
-        
-        # Get the base URL - try to detect from Streamlit config or use default
-        base_url = get_env_var('APP_URL', 'http://localhost:8501')
-        # Remove trailing slash if present
-        base_url = base_url.rstrip('/')
-        verify_url = f"{base_url}?token={token}"
-        
-        body = f"""
-Thank you for subscribing to Arc'teryx stock alerts!
-
-Please verify your email by clicking this link:
-{verify_url}
-
-Product: {product_url}
-
-If you didn't subscribe, you can ignore this email.
-        """
-        
-        msg = MIMEText(body, 'plain')
-        msg['From'] = sender
-        msg['To'] = email
-        msg['Subject'] = "Verify your Arc'teryx Stock Alert Subscription"
-        
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(sender, password)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Error sending email: {e}")
-        return False
-
-
-def send_stock_notification(email: str, product_name: str, product_url: str, 
-                           back_in_stock: List, out_of_stock: List):
-    """Send stock notification email."""
-    try:
-        sender = get_env_var('SENDER_EMAIL')
-        password = get_env_var('SENDER_PASSWORD')
-        smtp_server = get_env_var('SMTP_SERVER', 'smtp.gmail.com')
-        smtp_port = int(get_env_var('SMTP_PORT', '587'))
-        
-        if not all([sender, password]):
-            return False
-        
-        body = f"Arc'teryx {product_name} - Stock Status Update\n\n"
-        
-        if back_in_stock:
-            body += "🎉 BACK IN STOCK:\n"
-            for item in back_in_stock:
-                if isinstance(item, tuple) and len(item) == 2:
-                    color, size = item
-                    if size:
-                        body += f"  ✅ {color} - Size {size}\n"
-                    else:
-                        body += f"  ✅ {color}\n"
-            body += "\n"
-        
-        if out_of_stock:
-            body += "❌ NOW OUT OF STOCK:\n"
-            for item in out_of_stock:
-                if isinstance(item, tuple) and len(item) == 2:
-                    color, size = item
-                    if size:
-                        body += f"  ❌ {color} - Size {size}\n"
-                    else:
-                        body += f"  ❌ {color}\n"
-        
-        body += f"\nProduct URL: {product_url}\n"
-        body += f"Checked at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        
-        msg = MIMEText(body, 'plain')
-        msg['From'] = sender
-        msg['To'] = email
-        msg['Subject'] = f"🎉 Arc'teryx {product_name} Stock Alert!"
-        
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(sender, password)
-        server.send_message(msg)
-        server.quit()
-        return True
-    except Exception as e:
-        return False
+NEW_URL = "https://arc-scraper-v2.vercel.app/"
 
 
 def main():
-    # Handle verification first (before main UI)
-    try:
-        # Try new API first (Streamlit 1.28+)
-        if hasattr(st, 'query_params'):
-            query_params = st.query_params
-            # In Streamlit 1.28+, query_params is a dict-like object
-            # Access it directly or use .get()
-            token = query_params.get('token') if hasattr(query_params, 'get') else None
-            if not token and 'token' in query_params:
-                # Try direct access
-                token = query_params['token']
-        else:
-            # Fallback to experimental API (returns dict with list values)
-            query_params = st.experimental_get_query_params()
-            token_list = query_params.get('token', [])
-            token = token_list[0] if token_list else None
-        
-        if token:
-            # URL decode the token in case it's encoded
-            token = unquote(str(token))
-     
-            subscriptions = load_subscriptions()
-            verified = False
-            
-            # Try to find matching subscription
-            for sub_key, sub in subscriptions.items():
-                sub_token = sub.get('token', '')
-                # Compare tokens (both decoded)
-                if sub_token and sub_token == token:
-                    sub['verified'] = True
-                    save_subscriptions(subscriptions)
-                    st.success("✅ Email verified! You will now receive stock alerts.")
-                    st.balloons()
-                    verified = True
-                    break
-            
-            if not verified:
-                # Show more helpful error message
-                st.error(f"Invalid verification token.")
-                st.info("💡 Tip: Make sure you're using the exact link from your verification email.")
-            else:
-                return  # Exit early after successful verification
-    except Exception as e:
-        st.error(f"Error processing verification: {str(e)}")
-    
-    st.title("🏔️ Arc'teryx Stock Monitor")
-    st.markdown("Get notified when Arc'teryx products come back in stock!")
-    
-    # Info banner
-    st.info("📧 **How it works:** Subscribe with your email below. We'll automatically check stock every 15 minutes and email you when items come back in stock!")
-    
-    # Sidebar for navigation
-    page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions", "Popular Items", "Tutorial"])
-    
-    if page == "Tutorial":
-        st.header("📚 How to Subscribe - Step by Step Tutorial")
-        st.markdown("Learn how to subscribe to Arc'teryx stock alerts in just a few simple steps!")
-        
-        st.divider()
-        
-        # Step 1: Enter Email
-        st.subheader("Step 1: Enter Your Email Address")
-        st.markdown("Start by entering your email address where you'd like to receive stock notifications.")
-        
-        with st.container():
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                tutorial_email = st.text_input(
-                    "Your Email",
-                    value="your.email@example.com",
-                    key="tutorial_email",
-                    disabled=True
-                )
-            with col2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.success("✅ Email entered")
-        
-        st.info("💡 **Tip:** Use an email address you check regularly so you don't miss stock alerts!")
-        
-        st.divider()
-        
-        # Step 2: Enter Product URL
-        st.subheader("Step 2: Enter Product URL")
-        st.markdown("Copy and paste the full URL of the Arc'teryx product page you want to monitor.")
-        
-        with st.container():
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                tutorial_url = st.text_input(
-                    "Product URL (Example)",
-                    value="https://arcteryx.com/ca/en/shop/bird-head-toque",
-                    key="tutorial_url",
-                    disabled=True
-                )
-            with col2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.success("✅ URL entered")
-        
-        st.info("💡 **Tip:** Make sure you're on the product page (not the category page) and copy the full URL from your browser's address bar.")
-        
-        st.divider()
-        
-        # Step 3: Click Subscribe Button
-        st.subheader("Step 3: Click the Subscribe Button")
-        st.markdown("Once you've entered both your email and product URL, click the Subscribe button.")
-        
-        with st.container():
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button("Subscribe", type="primary", key="tutorial_subscribe", disabled=True):
-                    pass
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.success("✅ Subscription request sent!")
-        
-        st.info("💡 **What happens:** The system will check if you're already subscribed and verify your email address.")
-        
-        st.divider()
-        
-        # Step 4: Check Your Email
-        st.subheader("Step 4: Check Your Email for Verification")
-        st.markdown("After clicking Subscribe, you'll receive a verification email. Here's what it looks like:")
-        
-        # Email preview using image
-        with st.container():
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                # Use __file__ to get the script's directory, then build path relative to it
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                image_path = os.path.join(script_dir, "images", "verify.png")
-                
-                try:
-                    st.image(image_path, caption="Verification Email Preview")
-                except Exception as e:
-                    st.warning(f"⚠️ Could not load verification email image: {e}")
-                    st.info("💡 The verification email will contain a link to verify your subscription.")
-        
-        st.divider()
-        
-        # Step 5: Click Verification Link
-        st.subheader("Step 5: Click the Verification Link")
-        st.markdown("Click the verification link in your email (shown above) to activate your subscription.")
-        
-        
-        st.info("💡 **Tip:** The verification link expires after some time. If it doesn't work, you can request a new verification email.")
-        
-        st.divider()
-    
-    
-    elif page == "Subscribe":
-        st.header("Subscribe for Stock Alerts")
-        
-        # Display rate limit info
-        # st.caption(f"📊 Rate limits: Max {MAX_SUBSCRIPTIONS_PER_EMAIL} subscriptions per email, {MAX_ATTEMPTS_PER_EMAIL_PER_HOUR} attempts per hour")
-        
-        email = st.text_input("Your Email", placeholder="your.email@example.com")
-        product_url = st.text_input(
-            "Product URL",
-            placeholder="https://arcteryx.com/ca/en/shop/...",
-            help="Enter the full URL of the Arc'teryx product page"
-        )
-        
-        if st.button("Subscribe", type="primary"):
-            if not email or '@' not in email:
-                st.error("Please enter a valid email address")
-            elif not product_url or 'arcteryx.com' not in product_url:
-                st.error("Please enter a valid Arc'teryx product URL")
-            else:
-                # Clean up old rate limit attempts periodically (10% chance to avoid overhead)
-                import random
-                if random.random() < 0.1:
-                    try:
-                        cleanup_old_attempts()
-                    except:
-                        pass
-                
-                # Check rate limits before proceeding
-                session_id = get_session_id()
-                allowed, error_msg = check_rate_limit(email, session_id)
-                
-                if not allowed:
-                    # Record failed attempt due to rate limiting
-                    record_rate_limit_attempt(email, session_id, success=False)
-                    st.error(f"⚠️ {error_msg}")
-                    st.info("💡 This helps prevent abuse and ensures fair access for all users.")
-                else:
-                    subscriptions = load_subscriptions()
-                    sub_key = get_subscription_key(email, product_url)
-                    
-                    if sub_key in subscriptions:
-                        sub = subscriptions[sub_key]
-                        if sub.get('verified'):
-                            st.warning("You are already subscribed to this product!")
-                        else:
-                            # Resend verification
-                            record_rate_limit_attempt(email, session_id, success=True)
-                            if send_verification_email(email, sub['token'], product_url):
-                                st.info("Verification email resent! Please check your inbox.")
-                            else:
-                                st.error("Failed to send verification email. Please check your email configuration.")
-                    else:
-                        # Create new subscription
-                        record_rate_limit_attempt(email, session_id, success=True)
-                        token = secrets.token_urlsafe(32)
-                        subscriptions[sub_key] = {
-                            'email': email,
-                            'product_url': product_url,
-                            'token': token,
-                            'verified': False,
-                            'created_at': datetime.now().isoformat()
-                        }
-                        save_subscriptions(subscriptions)
-                        
-                        if send_verification_email(email, token, product_url):
-                            st.success("Subscription created! Please check your email to verify your subscription.")
-                        else:
-                            st.error("Failed to send verification email. Please check your email configuration.")
-    
-    elif page == "My Subscriptions":
-        st.header("My Subscriptions")
-        
-        email = st.text_input("Enter your email to view subscriptions", placeholder="your.email@example.com")
-        
-        if email and '@' in email:
-            subscriptions = load_subscriptions()
-            # Include the subscription ID (key) with each subscription
-            user_subs = [(sub_id, sub) for sub_id, sub in subscriptions.items() if sub['email'] == email]
-            
-            if not user_subs:
-                st.info("No subscriptions found for this email.")
-            else:
-                for sub_id, sub in user_subs:
-                    with st.container():
-                        col1, col2, col3 = st.columns([3, 1, 1])
-                        col1.write(f"**Product:** {sub['product_url']}")
-                        col2.write(f"**Status:** {'✅ Verified' if sub.get('verified') else '⏳ Pending'}")
-                        if sub.get('verified'):
-                            unsubscribe_token = sub['token']
-                            if col3.button("Unsubscribe", key=f"unsub_{sub['token']}"):
-                                try:
-                                    delete_subscription(sub_id)
-                                    st.success("Unsubscribed successfully!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Error unsubscribing: {e}")
-                        st.divider()
-    
-    elif page == "Popular Items":
-        st.header("🔥 Popular Items")
-        st.markdown("See the most subscribed products and when each size/color last came back in stock.")
-        
-        try:
-            popular_items = get_popular_items(limit=50)
-            
-            if not popular_items:
-                st.info("No popular items yet. Subscribe to products to see them here!")
-            else:
-                st.metric("Total Popular Products", len(popular_items))
-                
-                for item in popular_items:
-                    with st.expander(f"🏔️ {item['product_name']} ({item['subscription_count']} subscribers)", expanded=False):
-                        col1, col2 = st.columns([2, 1])
-                        with col1:
-                            st.write(f"**Product URL:** {item['product_url']}")
-                            if item.get('last_checked'):
-                                try:
-                                    last_checked_str = item['last_checked']
-                                    # Handle different timestamp formats
-                                    if last_checked_str.endswith('Z'):
-                                        last_checked_str = last_checked_str.replace('Z', '+00:00')
-                                    last_checked = datetime.fromisoformat(last_checked_str)
-                                    st.caption(f"Last checked: {last_checked.strftime('%Y-%m-%d %H:%M:%S')}")
-                                except Exception:
-                                    st.caption(f"Last checked: {item['last_checked']}")
-                        
-                        with col2:
-                            st.metric("Subscribers", item['subscription_count'])
-                        
-                        # Get last in-stock times
-                        try:
-                            last_times = get_last_in_stock_times(item['product_url'])
-                            
-                            if last_times:
-                                st.subheader("Last In-Stock Times")
-                                
-                                if item.get('has_sizes'):
-                                    # Display as table with sizes
-                                    for color, size_times in last_times.items():
-                                        st.write(f"**{color}**")
-                                        if size_times:
-                                            # Create a table for this color
-                                            table_data = []
-                                            for size, timestamp in sorted(size_times.items(), key=lambda x: x[1] if x[1] else '', reverse=True):
-                                                if timestamp:
-                                                    try:
-                                                        timestamp_str = timestamp.replace('Z', '+00:00') if timestamp.endswith('Z') else timestamp
-                                                        dt = datetime.fromisoformat(timestamp_str)
-                                                        time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
-                                                    except Exception:
-                                                        time_str = str(timestamp)
-                                                    table_data.append({
-                                                        'Size': size if size else 'N/A',
-                                                        'Last In Stock': time_str
-                                                    })
-                                            
-                                            if table_data:
-                                                st.table(table_data)
-                                            else:
-                                                st.caption("No stock history available")
-                                        st.divider()
-                                else:
-                                    # Display without sizes
-                                    table_data = []
-                                    for color, size_times in last_times.items():
-                                        if size_times:
-                                            # Get the most recent time for this color
-                                            timestamps = [ts for ts in size_times.values() if ts]
-                                            if timestamps:
-                                                latest = max(timestamps)
-                                                try:
-                                                    latest_str = latest.replace('Z', '+00:00') if latest.endswith('Z') else latest
-                                                    dt = datetime.fromisoformat(latest_str)
-                                                    time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
-                                                except Exception:
-                                                    time_str = str(latest)
-                                                table_data.append({
-                                                    'Color': color,
-                                                    'Last In Stock': time_str
-                                                })
-                                    
-                                    if table_data:
-                                        st.table(table_data)
-                                    else:
-                                        st.caption("No stock history available")
-                            else:
-                                st.info("No stock history available for this product yet.")
-                        except Exception as e:
-                            st.error(f"Error loading stock history: {e}")
-                        
-                        st.divider()
-        
-        except Exception as e:
-            st.error(f"Error loading popular items: {e}")
-            st.info("Make sure the stock_history table has been created in your Supabase database.")
+    st.markdown(
+        f"""
+        <div style="
+            background-color: #1a1a2e;
+            border: 2px solid #e94560;
+            border-radius: 12px;
+            padding: 60px 40px;
+            text-align: center;
+            margin: 40px auto;
+            max-width: 700px;
+        ">
+            <h1 style="color: #ffffff; margin-bottom: 10px; font-size: 2.5rem;">
+                Arc'teryx Stock Monitor
+            </h1>
+            <h2 style="color: #e94560; margin-bottom: 30px; font-size: 1.5rem;">
+                This app has moved!
+            </h2>
+            <p style="color: #cccccc; font-size: 1.1rem; margin-bottom: 30px;">
+                We've migrated to a new, faster platform.<br>
+                Please update your bookmarks.
+            </p>
+            <a href="{NEW_URL}" target="_self" style="
+                display: inline-block;
+                background-color: #e94560;
+                color: #ffffff;
+                padding: 16px 48px;
+                border-radius: 8px;
+                text-decoration: none;
+                font-size: 1.2rem;
+                font-weight: bold;
+            ">
+                Go to the new site
+            </a>
+            <p style="color: #888888; font-size: 0.9rem; margin-top: 30px;">
+                <a href="{NEW_URL}" style="color: #e94560;">{NEW_URL}</a>
+            </p>
+            <p style="color: #cccccc; font-size: 1rem; margin-top: 30px;">
+                Cheers,<br>Chow
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # --- All previous UI code is commented out below ---
+
+    # import json
+    # import os
+    # import sys
+    # import hashlib
+    # import secrets
+    # from datetime import datetime
+    # from typing import Dict, List, Optional
+    # from urllib.parse import unquote
+    # from dotenv import load_dotenv
+    # import smtplib
+    # from rate_limiter import MAX_SUBSCRIPTIONS_PER_EMAIL, MAX_ATTEMPTS_PER_EMAIL_PER_HOUR
+    # from email.mime.text import MIMEText
+    #
+    # sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    # load_dotenv()
+    #
+    # def get_env_var(key, default=None):
+    #     try:
+    #         if hasattr(st, 'secrets') and key in st.secrets:
+    #             return st.secrets[key]
+    #     except Exception:
+    #         pass
+    #     return os.getenv(key, default)
+    #
+    # from db import load_subscriptions, save_subscriptions, delete_subscription, get_popular_items, get_last_in_stock_times
+    # from rate_limiter import check_rate_limit, record_rate_limit_attempt, get_session_id, cleanup_old_attempts
+    #
+    # def get_subscription_key(email, product_url):
+    #     return hashlib.md5(f"{email}:{product_url}".encode()).hexdigest()
+    #
+    # def send_verification_email(email, token, product_url):
+    #     ...
+    #
+    # def send_stock_notification(email, product_name, product_url, back_in_stock, out_of_stock):
+    #     ...
+    #
+    # # Verification handling
+    # try:
+    #     if hasattr(st, 'query_params'):
+    #         query_params = st.query_params
+    #         token = query_params.get('token') if hasattr(query_params, 'get') else None
+    #         if not token and 'token' in query_params:
+    #             token = query_params['token']
+    #     else:
+    #         query_params = st.experimental_get_query_params()
+    #         token_list = query_params.get('token', [])
+    #         token = token_list[0] if token_list else None
+    #
+    #     if token:
+    #         token = unquote(str(token))
+    #         subscriptions = load_subscriptions()
+    #         verified = False
+    #         for sub_key, sub in subscriptions.items():
+    #             sub_token = sub.get('token', '')
+    #             if sub_token and sub_token == token:
+    #                 sub['verified'] = True
+    #                 save_subscriptions(subscriptions)
+    #                 st.success("Email verified! You will now receive stock alerts.")
+    #                 st.balloons()
+    #                 verified = True
+    #                 break
+    #         if not verified:
+    #             st.error("Invalid verification token.")
+    #         else:
+    #             return
+    # except Exception as e:
+    #     st.error(f"Error processing verification: {str(e)}")
+    #
+    # st.title("Arc'teryx Stock Monitor")
+    # st.markdown("Get notified when Arc'teryx products come back in stock!")
+    # st.info("How it works: Subscribe with your email below. ...")
+    #
+    # page = st.sidebar.selectbox("Navigation", ["Subscribe", "My Subscriptions", "Popular Items", "Tutorial"])
+    #
+    # if page == "Subscribe":
+    #     st.header("Subscribe for Stock Alerts")
+    #     email = st.text_input("Your Email", placeholder="your.email@example.com")
+    #     product_url = st.text_input("Product URL", placeholder="https://arcteryx.com/ca/en/shop/...")
+    #     if st.button("Subscribe", type="primary"):
+    #         ...
+    #
+    # elif page == "My Subscriptions":
+    #     st.header("My Subscriptions")
+    #     ...
+    #
+    # elif page == "Popular Items":
+    #     st.header("Popular Items")
+    #     ...
+    #
+    # elif page == "Tutorial":
+    #     st.header("How to Subscribe - Step by Step Tutorial")
+    #     ...
 
 
 if __name__ == "__main__":
