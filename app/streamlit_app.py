@@ -12,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-NEW_URL = "https://arc-scraper-v2.vercel.app/"
+NEW_URL = "https://arc-scraper.vercel.app/"
 
 
 def main():
